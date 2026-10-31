@@ -41,3 +41,4 @@ Skills used for this build live in `skills/`:
 ## Status
 
 Prototype in progress. The window, microphone capture, transcription, and streaming answer are built in small steps, each verified before the next one starts.
+# parakeet-prototype
