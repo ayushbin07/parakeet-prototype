@@ -9,7 +9,7 @@ Speak a question, see the transcription, then ask for a suggested answer. Everyt
 - Opens a simple desktop window with Start and Stop buttons.
 - Captures microphone audio while recording is on.
 - Displays the transcription of what was said.
-- On Suggest Answer, sends the transcript to a local language model and displays the answer progressively as it is generated.
+- When Stop is pressed, after transcription it automatically sends the transcript to a local language model and displays the answer progressively as it is generated.
 
 ## Stack
 

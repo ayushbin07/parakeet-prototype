@@ -15,34 +15,40 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Parakeet Prototype")
+        self.root.geometry("750x650")
 
         self.audio_frames = []
-        self.stream = None
         self.is_recording = False
         self.whisper_model = None
         self.ui_queue = queue.Queue()
 
-        btn_frame = tk.Frame(root)
-        btn_frame.pack(fill=tk.X, padx=8, pady=6)
+        main_frame = tk.Frame(root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        self.start_btn = tk.Button(btn_frame, text="Start", command=self.start_recording)
-        self.start_btn.pack(side=tk.LEFT, padx=4)
+        self.status_var = tk.StringVar(value="Idle")
+        self.status_label = tk.Label(main_frame, textvariable=self.status_var, anchor="w", font=("TkDefaultFont", 11))
+        self.status_label.pack(fill=tk.X, pady=(0, 8))
 
-        self.stop_btn = tk.Button(btn_frame, text="Stop", command=self.stop_recording, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=4)
+        btn_frame = tk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=(0, 8))
 
-        self.suggest_btn = tk.Button(
-            btn_frame, text="Suggest Answer", command=self.suggest_answer, state=tk.DISABLED
+        self.start_btn = tk.Button(
+            btn_frame, text="Start", command=self.start_recording, font=("TkDefaultFont", 11), padx=12, pady=4
         )
-        self.suggest_btn.pack(side=tk.LEFT, padx=4)
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        tk.Label(root, text="Transcript", anchor="w").pack(fill=tk.X, padx=8, pady=(4, 0))
-        self.transcript_box = scrolledtext.ScrolledText(root, height=8, state=tk.DISABLED)
-        self.transcript_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        self.stop_btn = tk.Button(
+            btn_frame, text="Stop", command=self.stop_recording, state=tk.DISABLED, font=("TkDefaultFont", 11), padx=12, pady=4
+        )
+        self.stop_btn.pack(side=tk.LEFT)
 
-        tk.Label(root, text="Answer", anchor="w").pack(fill=tk.X, padx=8, pady=(4, 0))
-        self.answer_box = scrolledtext.ScrolledText(root, height=12, state=tk.DISABLED)
-        self.answer_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        tk.Label(main_frame, text="Transcript", anchor="w", font=("TkDefaultFont", 11, "bold")).pack(fill=tk.X, pady=(4, 2))
+        self.transcript_box = scrolledtext.ScrolledText(main_frame, height=7, state=tk.DISABLED, font=("TkDefaultFont", 12))
+        self.transcript_box.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        tk.Label(main_frame, text="Answer", anchor="w", font=("TkDefaultFont", 11, "bold")).pack(fill=tk.X, pady=(4, 2))
+        self.answer_box = scrolledtext.ScrolledText(main_frame, height=11, state=tk.DISABLED, font=("TkDefaultFont", 12))
+        self.answer_box.pack(fill=tk.BOTH, expand=True)
 
         self.poll_queue()
 
@@ -67,9 +73,9 @@ class App:
     def start_recording(self):
         self.audio_frames = []
         self.is_recording = True
+        self.status_var.set("Recording")
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
-        self.suggest_btn.config(state=tk.DISABLED)
 
         def record():
             try:
@@ -89,12 +95,14 @@ class App:
 
     def on_mic_error(self, err_msg):
         self.set_text(self.answer_box, f"Microphone error: {err_msg}")
+        self.status_var.set("Idle")
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
 
     def stop_recording(self):
         self.is_recording = False
         self.stop_btn.config(state=tk.DISABLED)
+        self.status_var.set("Transcribing")
 
         def transcribe():
             try:
@@ -108,20 +116,28 @@ class App:
                     text = " ".join(s.text.strip() for s in segments)
                 self.ui_queue.put((self.on_transcribe_done, (text,)))
             except Exception as e:
-                self.ui_queue.put((self.set_text, (self.answer_box, f"Transcription error: {e}")))
-                self.ui_queue.put((self.start_btn.config, ({"state": tk.NORMAL},)))
+                self.ui_queue.put((self.on_transcribe_error, (str(e),)))
 
         threading.Thread(target=transcribe, daemon=True).start()
 
+    def on_transcribe_error(self, err_msg):
+        self.set_text(self.answer_box, f"Transcription error: {err_msg}")
+        self.status_var.set("Idle")
+        self.start_btn.config(state=tk.NORMAL)
+
     def on_transcribe_done(self, text):
         self.set_text(self.transcript_box, text)
-        self.start_btn.config(state=tk.NORMAL)
-        self.suggest_btn.config(state=tk.NORMAL)
+        if not text.strip():
+            self.set_text(self.answer_box, "No speech detected, try again")
+            self.status_var.set("Idle")
+            self.start_btn.config(state=tk.NORMAL)
+            return
 
-    def suggest_answer(self):
-        self.suggest_btn.config(state=tk.DISABLED)
+        self.start_answer_stream(text.strip())
+
+    def start_answer_stream(self, prompt):
+        self.status_var.set("Answering")
         self.set_text(self.answer_box, "")
-        prompt = self.transcript_box.get("1.0", tk.END).strip()
 
         def stream_ollama():
             try:
@@ -137,10 +153,12 @@ class App:
                         chunk = json.loads(line)
                         part = chunk.get("response", "")
                         self.ui_queue.put((self.append_text, (self.answer_box, part)))
+                self.ui_queue.put((self.status_var.set, ("Done",)))
             except Exception as e:
                 self.ui_queue.put((self.set_text, (self.answer_box, f"Ollama error: {e}")))
+                self.ui_queue.put((self.status_var.set, ("Idle",)))
             finally:
-                self.ui_queue.put((self.suggest_btn.config, ({"state": tk.NORMAL},)))
+                self.ui_queue.put((self.start_btn.config, ({"state": tk.NORMAL},)))
 
         threading.Thread(target=stream_ollama, daemon=True).start()
 
